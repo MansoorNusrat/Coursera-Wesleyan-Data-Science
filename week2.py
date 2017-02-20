@@ -7,6 +7,17 @@
 
 import pandas
 import numpy
+import seaborn
+import matplotlib.pyplot as plt
+
+#Set PANDAS to show all columns in DataFrame
+pandas.set_option('display.max_columns', None)
+#Set PANDAS to show all rows in DataFrame
+pandas.set_option('display.max_rows', None)
+
+# bug fix for display formats to avoid run time errors
+pandas.set_option('display.float_format', lambda x:'%f'%x)
+
 
 # Just some logging to show program has started (and is loading data ... takes
 # a looooong time to load.
@@ -15,13 +26,7 @@ alldata = pandas.read_csv("nesarc_pds.csv", low_memory=False)
 
 samplesize = len(alldata)
 
-print("Sample size:{}".format(samplesize))
-
-# dictionary that contains the variable distributions
-countdata = {}
-
-# dictionary that contains the reduced subsets of data which we are focusing on
-subsets = {}
+print("Sample size:%d" %samplesize)
 
 # aliases for the variable names, so they are easier to identify
 key_lookup = {
@@ -49,6 +54,10 @@ key_lookup = {
                           "nan = no data or n/a"
             }
     }
+
+WhenWentToDetoxKey = key_lookup["WhenWentToDetox"]["variable"]
+WhenWentToOutpatientKey = key_lookup["WhenWentToOutpatient"]["variable"]
+ManicAfterUseKey = key_lookup["ManicAfterUse"]["variable"]
 
 
 """
@@ -104,11 +113,10 @@ def convert_and_prune(variable):
     # convert response of 9 to invalid
     alldata[variable] = alldata[variable].replace(9, numpy.nan)
     
-
+    
 convert_and_prune(key_lookup["WhenWentToDetox"]["variable"])
 convert_and_prune(key_lookup["WhenWentToOutpatient"]["variable"])
 convert_and_prune(key_lookup["ManicAfterUse"]["variable"])
-
 
 """
 make sure all the variable types we're interested have been sanitized
@@ -117,7 +125,7 @@ for substance,keys in substance_variable_lookup.items():
     variable = keys["UsedInPrev24Months"]
     convert_and_prune(variable)
 
-    
+ 
 def has_used_any(row):
     """
     Function which determines if subject has used any substance in the last
@@ -153,10 +161,12 @@ print("Have reduced population size of %d\n" %len(HasEverUsedData))
 Want to reduce our variables to only include the ones we are interested in
 """
 print("Creating reduced variable dataframe\n")
+
+
 HasEverUsedData = HasEverUsedData[["IDNUM",
-                                   key_lookup["WhenWentToDetox"]["variable"],
-                                   key_lookup["WhenWentToOutpatient"]["variable"],
-                                   key_lookup["ManicAfterUse"]["variable"]
+                                   WhenWentToDetoxKey,
+                                   WhenWentToOutpatientKey,
+                                   ManicAfterUseKey
                                  ]]
 
 print("First 10 rows of new data frame:")
@@ -175,3 +185,57 @@ for variable,info in key_lookup.items():
                 dropna=False,
                 normalize=True)
     print("Percentages:\n{}\n".format(counts))
+
+
+# recode ManicAfterUse so that response of 0 indicates No, and 1 indicates yes
+HasEverUsedData[ManicAfterUseKey] = HasEverUsedData[ManicAfterUseKey].replace(2, 0)
+
+seaborn.countplot(x=ManicAfterUseKey, data=HasEverUsedData)
+plt.xlabel("Was manic after use")
+plt.title("Experienced mania after drug use")
+
+
+# want to just know if they had treatment in the last 12 months
+HasEverUsedData[WhenWentToDetoxKey] = HasEverUsedData[WhenWentToDetoxKey].replace(3, 1)
+HasEverUsedData[WhenWentToOutpatientKey] = HasEverUsedData[WhenWentToOutpatientKey].replace(3, 1) 
+
+# Collapse outpatient and detox recovery into one variable:HasHadTreatment
+def has_had_treatment(row):
+    if row[WhenWentToDetoxKey]==1:
+        return 1
+    if row[WhenWentToOutpatientKey]==1:
+        return 1
+    return 0
+
+HasEverUsedData["HasHadTreatment"] = HasEverUsedData.apply(lambda row: has_had_treatment(row), axis=1)
+
+# Turn it into a categorical variable
+HasEverUsedData["HasHadTreatment"] = HasEverUsedData["HasHadTreatment"].astype("category")
+HasEverUsedData["HasHadTreatment"] = HasEverUsedData["HasHadTreatment"].cat.rename_categories(["no", "yes"])
+
+# distribution plot of the the variable "HasHadTreatment"
+seaborn.countplot(x="HasHadTreatment", data=HasEverUsedData)
+plt.xlabel("Has had treatment")
+plt.title("Has had any treatment in the last 12 months")
+
+
+description = HasEverUsedData["HasHadTreatment"].describe()
+print(description)
+
+# use the group by method to get variable distribution (instead of value_counts)
+frequency = HasEverUsedData.groupby("HasHadTreatment").size()
+percentage = (frequency / len(HasEverUsedData)) * 100
+
+print(frequency)
+print(percentage)             
+
+
+seaborn.factorplot(x="HasHadTreatment",
+                   y=ManicAfterUseKey,
+                   data=HasEverUsedData,
+                   kind="bar",
+                   ci=None)
+
+plt.xlabel("Has had treatment in last 12 months")
+plt.ylabel("Was manic after drug use")
+
